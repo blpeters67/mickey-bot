@@ -1,0 +1,72 @@
+# Core dependencies — always installed.
+#
+# The optional extras below stay commented out on purpose: several pull torch
+# and are multiple GB. Rather than uncommenting by hand, let install.sh do it:
+#
+#   ./install.sh              core + the tiny extras (qr, langdetect)
+#   ./install.sh --all        everything, including the AI stack (~5 GB)
+#   ./install.sh --karaoke    just AI vocal separation
+#   ./install.sh --help       every flag
+#
+discord.py>=2.7,<3                   # 2.7+ required: it gates voice behind the DAVE (E2EE) lib the -clip recorder decrypts with
+davey                               # DAVE end-to-end voice lib (Rust); PyPI name is `davey`, NOT discord-ext-davey. 0.1.6 ships wheels for Linux and Windows, CPython 3.12-3.14 (re-check before moving hosts)
+discord-ext-voice-recv==0.5.2a179   # voice receive (for -clip); pinned — pre-release, warns of breaking changes
+yt-dlp[default]>=2025.11.12          # [default] brings yt-dlp-ejs, the YouTube challenge solver. Also install Deno (winget install --id=DenoLand.Deno) — without both, yt-dlp can't solve it and gets fewer formats (a likely cause of on-and-off 403s)
+PyNaCl>=1.5.0
+spotipy>=2.23.0
+python-dotenv>=1.0.0
+aiosqlite>=0.20.0
+aiohttp>=3.9.0
+Pillow>=10.0.0                      # image editing cog (-flip, -crop, -caption, …) and OCR preprocessing
+edge-tts>=7.0                       # -tts: Microsoft's neural voices (online, free, no API key). Pure Python, tiny
+
+# Optional — enables the -transcribe command (speech-to-text).
+#   ./install.sh --whisper
+# faster-whisper>=1.0.0
+
+# Optional — enables -karaoke (real AI vocal removal, not the old channel-
+# cancellation filter). Pulls torch + onnxruntime (several hundred MB) and
+# downloads a separation model (~100-500 MB) on first use.
+#
+# On a CPU-only host separation runs at roughly realtime or slower, which is
+# why `karaoke` hands back a *file* instead of swapping the audio into live
+# playback — a track finishes long before its instrumental is ready. Results
+# are cached in ./stem_cache (STEM_CACHE_DIR, capped by STEM_CACHE_MB, default
+# 2048); budget ~6 MB per track at the default STEM_BITRATE of 192k, chosen so
+# a typical song fits Discord's 10 MB attachment limit.
+# SEPARATION_MODEL picks the quality/speed trade-off:
+# `fast` (default, the only sensible choice without a GPU), `good`, or `best`.
+#
+#   ./install.sh --karaoke          # CPU build
+#   ./install.sh --karaoke --gpu    # CUDA build
+#
+# audio-separator>=0.24
+
+# Optional (./install.sh --rembg) — enables -nobg (AI background removal). Downloads a ~180 MB
+# U²-Net model on first use and wants ~1 GB RAM while running.
+# rembg>=2.0.50
+# onnxruntime>=1.16.0
+
+# Optional (installed by default; ./install.sh --qr) — enables -qr.
+# Tiny, pure-pip, no system libraries.
+# `qrcode` generates, `zxing-cpp` reads (and handles barcodes too).
+# qrcode>=7.4
+# zxing-cpp>=2.2.0
+
+# Optional (./install.sh --translate) — enables -translate, running
+# locally with no API key.
+# argostranslate is a heavy install (it pulls ctranslate2 and torch), and each
+# language pair is a further ~100 MB downloaded on demand via
+# `-translate install <from> <to>`. langdetect is tiny and identifies the
+# source language; without it you'll be asked to name it.
+# argostranslate>=1.9
+# langdetect>=1.0.9
+
+# Optional (system package, not pip) — enables -ocr. install.sh offers to
+# apt-get this for you.
+#   sudo apt install tesseract-ocr
+#   sudo apt install tesseract-ocr-deu   # and any other languages you want
+
+# Dev / test
+pytest>=8.0.0
+pytest-asyncio>=0.23.0

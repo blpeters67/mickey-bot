@@ -1,0 +1,60 @@
+# Secrets — never commit these
+.env
+.env.*
+!.env.example
+token.txt
+spotify.txt
+cookies.txt
+*.pem
+*.key
+
+# Private notes (server details) and deploy leftovers
+handoff.txt
+CLAUDE_VOICE_DJ_FIX_PROMPT.md
+.claude-staging/
+.deploy/
+.update-backups/
+update-r*.sh
+.fuse_hidden*
+
+# Bot data
+bot.db
+bot.db-journal
+bot.db-shm
+bot.db-wal
+*.db
+*.sqlite3
+*.log
+logs/
+
+# Old single-file artifacts (in case you migrate)
+uploads.json
+playlists.json
+
+# Python
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+.Python
+build/
+dist/
+*.egg-info/
+.eggs/
+.pytest_cache/
+.coverage
+htmlcov/
+.tox/
+
+# Virtual envs
+venv/
+.venv/
+env/
+ENV/
+
+# Editor
+.vscode/
+.idea/
+*.swp
+*.swo
+.DS_Store
