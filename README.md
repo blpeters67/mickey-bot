@@ -2,7 +2,7 @@
 
 A multi-server Discord music bot — refactored from a 4,000-line single file
 into a proper cog-based project. Plays from YouTube, SoundCloud, Spotify,
-Bandcamp, and direct file links; supports saved playlists; downloads tracks;
+Bandcamp, audio.com, and direct file links; supports saved playlists; downloads tracks;
 shows synced karaoke lyrics; and includes Poker, Blackjack, and Yahtzee.
 
 It has also grown a decent media toolbox along the way — converting,
@@ -90,7 +90,7 @@ The default prefix is `-`. Change it per-server with `-prefix <new>`
 
 | | |
 | --- | --- |
-| `play <query>` | Search or URL — YouTube, SoundCloud, Spotify, Bandcamp, Discord CDN |
+| `play <query>` | Search or URL — YouTube, SoundCloud, Spotify, Bandcamp, audio.com (tracks and collections), Discord CDN |
 | `playnext <query>` | Add to the front of the queue |
 | `search <query>` | Top 5 YouTube results in a picker — choose instead of taking the first match |
 | `queue`, `nowplaying`, `skip`, `pause`, `resume`, `stop`, `leave` | The usual |
@@ -202,6 +202,11 @@ to `commands.AutoShardedBot` in `bot.py` if you ever get there.
 - **Spotify private and Blend playlists** are not supported — they require
   per-user OAuth, which the bot doesn't do. Public playlists, albums, and
   tracks work fine.
+- **audio.com** links go through audio.com's own API (`core/audiocom.py`),
+  not yt-dlp: yt-dlp has no audio.com extractor, and the site's pages answer
+  servers with a browser check. Public tracks, embeds and collections play
+  (a collection gets the usual Queue all / Shuffle all / First only prompt)
+  and `dl` saves a track's MP3; private ones can't be reached.
 - **Login-gated sources** (many Instagram posts, private/age-restricted
   YouTube, members-only) can't be fetched anonymously — the bot replies that
   the post is private/login-gated. To enable them, give yt-dlp a cookies file:
@@ -513,6 +518,7 @@ musicbot/
 │   ├── updater.py          pip upgrades + version diffing
 │   ├── separation.py       AI stem separation (subprocess, CPU-throttled)
 │   ├── audio.py            yt-dlp + Spotify + ffmpeg glue
+│   ├── audiocom.py         audio.com tracks and collections through its API
 │   ├── recurrence.py       "every weekday 8:30" + "friday 3pm" + timezones
 │   ├── imageops.py         Pillow transforms, QR, emoji/sticker fitting
 │   ├── translate.py        local argostranslate wrapper + language detection

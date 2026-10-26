@@ -79,6 +79,16 @@ def _clean_ytdlp_err(e: Exception) -> str:
     return msg or "Unknown error"
 
 
+def _named_after(path: str, title: str) -> str:
+    """`path` renamed to "<title><its extension>" in the same folder, for a
+    file that was fetched from a direct link and so is named after the link."""
+    stem = yt_dlp.utils.sanitize_filename(title).strip()[:150] or "audio"
+    dest = os.path.join(os.path.dirname(path), stem + os.path.splitext(path)[1])
+    if dest != path:
+        os.replace(path, dest)
+    return dest
+
+
 # ──────────────────────────────────────────────────────────────────────────────
 # Tier thresholds
 # ──────────────────────────────────────────────────────────────────────────────
@@ -2111,17 +2121,21 @@ class DownloadsCog(commands.Cog, name="Downloads"):
                 return None
             return src, src_name
 
-        try:
-            src = await self._download_direct(
-                url, workdir=workdir, status=status, canceller=canceller,
-            )
-        except ValueError as e:
-            await status.edit(content=f"❌ {e}", view=None)
-            return None
-        except Exception as e:
-            log.exception("%s: direct download failed for %s", label, url)
-            await status.edit(content=f"❌ Download failed: {e}", view=None)
-            return None
+        # An audio.com page is behind a browser check — fetching it directly
+        # only ever gets a 403. _fetch_via_ytdlp goes through its API instead.
+        src = None
+        if not audio.is_audiocom_url(url or ""):
+            try:
+                src = await self._download_direct(
+                    url, workdir=workdir, status=status, canceller=canceller,
+                )
+            except ValueError as e:
+                await status.edit(content=f"❌ {e}", view=None)
+                return None
+            except Exception as e:
+                log.exception("%s: direct download failed for %s", label, url)
+                await status.edit(content=f"❌ Download failed: {e}", view=None)
+                return None
         if src is None:
             # The URL is a web page, not a file — let yt-dlp deal with it
             # (YouTube, SoundCloud, Twitter, …). raw_media: take whatever
@@ -3945,6 +3959,26 @@ class DownloadsCog(commands.Cog, name="Downloads"):
             preset_title    = sp_track["title"]
             preset_duration = sp_track["duration"]
 
+        # audio.com's pages answer yt-dlp with a browser check (403), but its
+        # API hands out the file itself, which yt-dlp fetches like any direct
+        # link. That file is named after its storage key, so it's renamed to
+        # the song once it's down.
+        name_after = None
+        if audio.is_audiocom_url(query):
+            if forced == "mp4":
+                await status.edit(content="❌ audio.com is audio-only — `mp4` not supported.")
+                return None
+            try:
+                ac_track = await audio.fetch_track(query)
+            except Exception as e:
+                log.warning("audio.com lookup failed for %s: %s", query, e)
+                await status.edit(content=f"❌ {audio.friendly_error_msg(e)}")
+                return None
+            query           = ac_track["stream_url"]
+            preset_title    = ac_track["title"]
+            preset_duration = ac_track["duration"]
+            name_after      = ac_track["title"]
+
         def _probe():
             # Built from the shared base so this can't drift away from the
             # playback path again — see the note in core/audio.py.
@@ -4098,6 +4132,8 @@ class DownloadsCog(commands.Cog, name="Downloads"):
         if not os.path.exists(filepath):
             await status.edit(content="❌ File missing after download.")
             return None
+        if name_after:
+            filepath = _named_after(filepath, name_after)
 
         # Direct-hosted files (catbox, litterbox, arbitrary CDNs, plain mp4
         # URLs) don't carry metadata that yt-dlp can extract. The duration

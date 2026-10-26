@@ -18,6 +18,7 @@ Key design decisions, all of which fix bugs from the original bot.py:
 from __future__ import annotations
 
 import asyncio
+import calendar
 import json
 import os
 import random
@@ -33,6 +34,7 @@ from urllib.parse import parse_qs, urlsplit
 import aiohttp
 import yt_dlp
 
+from . import audiocom
 from .config import settings
 from .formatters import redact_secrets
 from .logging_setup import get_logger
@@ -226,6 +228,12 @@ def is_spotify_url(url: str) -> bool:
 def is_spotify_playlist(url: str) -> bool:
     return is_spotify_url(url) and ("/playlist/" in url or "/album/" in url)
 
+def is_audiocom_url(url: str) -> bool:
+    """Any audio.com link — a track, a collection, or a page that's neither
+    (which is refused with a message rather than handed to yt-dlp, whose only
+    answer is the site's browser check)."""
+    return audiocom.parse(url) is not None
+
 def is_any_playlist(url: str) -> bool:
     if is_spotify_playlist(url):
         return True
@@ -235,10 +243,14 @@ def is_any_playlist(url: str) -> bool:
         return True
     if "bandcamp.com" in url and ("/album/" in url or "/music" in url):
         return True
+    link = audiocom.parse(url)
+    if link is not None and link.kind == "collection":
+        return True
     return False
 
 
 def playlist_source_label(url: str) -> str:
+    if is_audiocom_url(url):      return "audio.com"
     if is_spotify_url(url):       return "Spotify"
     if "soundcloud.com" in url:   return "SoundCloud"
     if "bandcamp.com" in url:     return "Bandcamp"
@@ -362,6 +374,81 @@ def _spotify_track_to_stub(t: dict, source_url: str, *, thumb=None) -> dict:
         "_needs_resolve": True,
         "_search_query":  title,
     }
+
+
+# ──────────────────────────────────────────────────────────────────────────────
+# audio.com — through its own API (core/audiocom.py), never yt-dlp: there's no
+# extractor for it, and its pages answer anything but a browser with a 403.
+# ──────────────────────────────────────────────────────────────────────────────
+
+async def _audiocom_resolve(link: audiocom.Link) -> audiocom.Track:
+    """The track a link plays. A collection link given as one song plays its
+    first track, as yt-dlp's first entry would for any other playlist."""
+    if link.kind == "collection":
+        entries = await audiocom.fetch_collection(link, pages=1)
+        first = audiocom.parse(entries[0].page_url) if entries else None
+        if first is None:
+            raise audiocom.AudioComError("That audio.com collection is empty.")
+        link = first
+    return await audiocom.fetch_track(link)
+
+
+def _apply_audiocom(track: dict[str, Any], t: audiocom.Track, *, retitle: bool = False) -> None:
+    """A fetched audio.com track onto a queue entry: its stream (and when the
+    signed link expires), and what it is — the uploader, and for music the
+    artist and song, which play stats, the quiz and Last.fm read."""
+    track["stream_url"]       = t.stream_url
+    track["_http_headers"]    = {}
+    track["_stream_duration"] = t.duration
+    track["_expires_at"]      = _url_expiry(t.stream_url)
+    track["_resolved_at"]     = time.time()
+    track["webpage_url"]      = t.page_url
+    if retitle or not track.get("title"):
+        track["title"] = t.display_title
+    if not track.get("duration"):
+        track["duration"] = t.duration
+    if not track.get("thumbnail"):
+        track["thumbnail"] = t.image
+    if t.author:
+        track["uploader"] = t.author
+    if t.is_music and t.author:
+        track["artist"] = t.author
+        if t.title:
+            track["song_title"] = t.title
+    track["is_music_meta"]  = t.is_music
+    track["_needs_resolve"] = False
+
+
+def _audiocom_stub(t: audiocom.Track) -> dict[str, Any]:
+    """A collection entry for the queue, fetched (through the API) when it plays."""
+    return {
+        "title":          t.display_title,
+        "stream_url":     None,
+        "webpage_url":    t.page_url,
+        "duration":       t.duration,
+        "thumbnail":      t.image,
+        "requester":      None,
+        "_needs_resolve": True,
+        "_search_query":  t.page_url,
+    }
+
+
+async def fetch_audiocom_track(link: audiocom.Link) -> dict[str, Any]:
+    """An audio.com link as a ready-to-play track (raises ValueError with a
+    message for the user when it can't be played)."""
+    t = await _audiocom_resolve(link)
+    track: dict[str, Any] = {
+        "title":          t.display_title,
+        "stream_url":     None,
+        "webpage_url":    t.page_url,
+        "duration":       t.duration,
+        "thumbnail":      t.image,
+        "requester":      None,
+        "_needs_resolve": False,
+        "_search_query":  None,
+    }
+    _apply_audiocom(track, t)
+    return track
 
 
 # ──────────────────────────────────────────────────────────────────────────────
@@ -515,7 +602,11 @@ async def _with_retry(fn, *, attempts: int = 5, base_delay: float = 1.0,
 
 
 async def fetch_track(query: str) -> dict[str, Any] | None:
-    """One track: search query, YouTube/SoundCloud URL, Discord CDN, or Spotify."""
+    """One track: search query, YouTube/SoundCloud URL, Discord CDN, Spotify,
+    or audio.com."""
+    link = audiocom.parse(query)
+    if link is not None:            # its API has its own guard for tests
+        return await fetch_audiocom_track(link)
     if BLOCK_REAL_SEARCH:
         raise SearchBlocked(f"real lookup of {query!r} in a test")
     if is_discord_cdn(query):
@@ -561,6 +652,13 @@ async def fetch_info(url: str) -> dict[str, Any] | None:
     everything the player doesn't use — including `chapters`. This returns the
     original dict for callers that need those extra fields (`-chapters`).
     """
+    link = audiocom.parse(url)
+    if link is not None:
+        # audio.com has no chapters; this is what -chapters needs to say so.
+        t = await _audiocom_resolve(link)
+        return {"title": t.display_title, "duration": t.duration, "webpage_url": t.page_url,
+                "url": t.stream_url, "thumbnail": t.image, "chapters": None}
+
     def _extract():
         with yt_dlp.YoutubeDL({**YDL_BASE, "skip_download": True}) as ydl:
             info = ydl.extract_info(url, download=False)
@@ -572,9 +670,15 @@ async def fetch_info(url: str) -> dict[str, Any] | None:
 
 
 async def fetch_playlist(url: str) -> list[dict[str, Any]]:
-    """A whole YouTube/SoundCloud/Bandcamp/Spotify playlist or album."""
+    """A whole YouTube/SoundCloud/Bandcamp/Spotify playlist or album, or an
+    audio.com collection."""
     if is_spotify_url(url):
         return await fetch_spotify_tracks(url)
+    link = audiocom.parse(url)
+    if link is not None:
+        if link.kind == "track":
+            return [await fetch_audiocom_track(link)]
+        return [_audiocom_stub(t) for t in await audiocom.fetch_collection(link)]
 
     def _extract():
         with yt_dlp.YoutubeDL(YDL_FLAT) as ydl:
@@ -655,14 +759,21 @@ def stream_headers(info: dict) -> dict[str, str]:
 
 
 def _url_expiry(url: str | None) -> float | None:
-    """Unix expiry carried in a signed stream URL (`expire=` — YouTube's
-    googlevideo links), or None if the URL doesn't say."""
+    """Unix expiry carried in a signed stream URL, or None if the URL doesn't
+    say: `expire=` (YouTube's googlevideo links), or an S3-style signature —
+    signed at `X-Amz-Date` (UTC), valid for `X-Amz-Expires` seconds — as on
+    audio.com's links."""
     if not url:
         return None
     try:
-        vals = parse_qs(urlsplit(url).query).get("expire")
-        return float(vals[0]) if vals else None
-    except (ValueError, TypeError):
+        query = {k.lower(): v for k, v in parse_qs(urlsplit(url).query).items()}
+        if query.get("expire"):
+            return float(query["expire"][0])
+        signed, lasts = query.get("x-amz-date"), query.get("x-amz-expires")
+        if signed and lasts:
+            return calendar.timegm(time.strptime(signed[0], "%Y%m%dT%H%M%SZ")) + float(lasts[0])
+        return None
+    except (ValueError, TypeError, OverflowError):
         return None
 
 
@@ -724,6 +835,13 @@ async def resolve_stream_url(track: dict[str, Any], *,
     target = track.get("_search_query") or track.get("webpage_url")
     if not target:
         raise ValueError(f"Track {track.get('title')!r} has no resolvable source")
+
+    link = audiocom.parse(target)
+    if link is not None:
+        # A bare link queued from a saved playlist is its own title until now.
+        placeholder = track.get("title") in (target, track.get("webpage_url"))
+        _apply_audiocom(track, await _audiocom_resolve(link), retitle=placeholder)
+        return track
 
     def _resolve():
         with yt_dlp.YoutubeDL({**YDL_BASE, "skip_download": True}) as ydl:

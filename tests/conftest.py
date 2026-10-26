@@ -31,3 +31,8 @@ _music_catalog.BLOCK_REAL_HOSTS = True
 from core import audio as _audio  # noqa: E402
 
 _audio.BLOCK_REAL_SEARCH = True
+
+# Nor audio.com's API: tests/test_audiocom.py runs a local stand-in for it.
+from core import audiocom as _audiocom  # noqa: E402
+
+_audiocom.BLOCK_REAL_HOST = True

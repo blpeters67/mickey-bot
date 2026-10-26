@@ -1165,7 +1165,8 @@ class MusicCog(commands.Cog, name="Music"):
     @commands.hybrid_command(name="play", aliases=["p"], description="Play a song, playlist, or attached file",
                               help=(
                                   "Search or paste a URL — YouTube, SoundCloud, Spotify, "
-                                  "Bandcamp, or a direct file link. Playlists prompt you to "
+                                  "Bandcamp, audio.com, or a direct file link. Playlists "
+                                  "(and audio.com collections) prompt you to "
                                   "choose 'Queue all', 'Shuffle all', or 'First only'.\n\n"
                                   "**Also accepts file attachments.** Drag an .mp3/.wav/.mp4 "
                                   "(etc.) into a message with `-play` and the bot plays the "
