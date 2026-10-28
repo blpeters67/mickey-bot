@@ -19,7 +19,7 @@ from __future__ import annotations
 
 import asyncio
 import io
-import os
+import subprocess
 import sys
 
 import discord
@@ -225,19 +225,19 @@ class MaintenanceCog(commands.Cog, name="Maintenance"):
                 await vc.disconnect(force=True)
             except Exception:
                 pass
+        # The re-exec happens in bot.py once the event loop has finished, as
+        # for the console's `restart`. Set the flag BEFORE closing: closing
+        # can tear the loop down before control returns from the await, and
+        # an exec placed after it then never ran — the process hung at exit
+        # instead (2026-10-28).
+        self.bot._restart_requested = True
+        if sys.stdin.isatty():
+            subprocess.run(["stty", "sane"], check=False)   # see core/console.py
+        log.info("Restart requested — closing, then bot.py re-execs")
         try:
             await self.bot.close()
         except Exception:
             log.debug("close() raised during restart", exc_info=True)
-
-        log.info("Restarting: execv %s %s", sys.executable, sys.argv)
-        try:
-            os.execv(sys.executable, [sys.executable] + sys.argv)
-        except Exception:
-            # If exec fails we've already closed the gateway, so the only sane
-            # move is to exit and let the supervisor start us again.
-            log.exception("execv failed — exiting for the supervisor to restart")
-            os._exit(1)
 
 
 async def setup(bot: commands.Bot) -> None:
