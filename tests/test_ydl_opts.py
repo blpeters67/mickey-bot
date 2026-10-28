@@ -139,6 +139,35 @@ def test_403_is_treated_as_retryable(msg):
     assert audio._is_transient_network_error(Exception(msg))
 
 
+CLOUDFLARE = ("ERROR: [generic] Got HTTP Error 403 caused by Cloudflare anti-bot challenge; "
+              "see  https://github.com/yt-dlp/yt-dlp#impersonation  for how to install the "
+              "required impersonation dependency, and try again with  --extractor-args "
+              "\"generic:impersonate\"")     # yt-dlp's words, as the bot logged them
+
+
+def test_a_cloudflare_block_is_not_retried_as_a_dead_link():
+    """A browser check answers every retry the same way: retrying only made
+    the user wait 15 s for a wrong "connection dropped"."""
+    assert not audio._is_transient_network_error(Exception(CLOUDFLARE))
+
+
+@pytest.mark.asyncio
+async def test_a_cloudflare_block_fails_at_once_and_says_why(monkeypatch):
+    calls = []
+
+    def blocked():
+        calls.append(1)
+        raise Exception(CLOUDFLARE)
+
+    monkeypatch.setattr(audio.asyncio, "sleep", lambda *_a: pytest.fail("retried"))
+    with pytest.raises(Exception) as err:
+        await audio._with_retry(blocked)
+    assert len(calls) == 1
+    msg = audio.friendly_error_msg(err.value)
+    assert "anti-bot" in msg and "connection dropped" not in msg
+    assert "github.com" not in msg and "impersonat" not in msg
+
+
 def test_genuine_permanent_errors_are_not_retried():
     for msg in ("Video unavailable", "Private video",
                 "This video has been removed by the uploader"):
@@ -228,3 +257,9 @@ def test_ytdlp_warnings_reach_the_log_once(caplog):
     lines = [r.getMessage() for r in caplog.records if "yt-dlp:" in r.getMessage()]
     assert len(lines) == 1 and "n challenge solving failed" in lines[0]
     assert "SECRET" not in lines[0]
+
+
+def test_downloads_explain_a_cloudflare_block_the_same_way():
+    from cogs.downloads import _clean_ytdlp_err
+    msg = _clean_ytdlp_err(Exception(CLOUDFLARE))
+    assert "anti-bot" in msg and "impersonat" not in msg

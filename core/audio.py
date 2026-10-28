@@ -487,6 +487,16 @@ async def fetch_discord_track(url: str) -> dict[str, Any]:
     }
 
 
+def _is_bot_check(text: str) -> bool:
+    """yt-dlp's "HTTP Error 403 caused by Cloudflare anti-bot challenge": the
+    site refuses anything that isn't a real browser."""
+    return "anti-bot challenge" in text.lower()
+
+
+BOT_CHECK_MSG = ("That site blocks bots with an anti-bot check (Cloudflare), so I can't "
+                 "fetch it from here.")
+
+
 def _is_transient_network_error(exc: BaseException) -> bool:
     """Best-effort detection of one-off network blips worth retrying.
 
@@ -497,6 +507,8 @@ def _is_transient_network_error(exc: BaseException) -> bool:
     retry, which is cheap.
     """
     s = str(exc).lower()
+    if _is_bot_check(s):
+        return False        # a browser check answers every retry the same way
     needles = (
         "remotedisconnected", "connection aborted", "connection reset",
         "timed out", "timeout", "network is unreachable",
@@ -553,6 +565,8 @@ def friendly_error_msg(exc: BaseException) -> str:
     known transient errors into one short, actionable message and clips
     anything else to a reasonable length.
     """
+    if _is_bot_check(str(exc)):
+        return BOT_CHECK_MSG
     if _is_transient_network_error(exc):
         return (
             "Couldn't reach the source right now — connection dropped. "
@@ -949,7 +963,7 @@ def upload_score(entry: dict, title: str, artist: str = "", duration: int = 0) -
     off = abs(got - duration) if (duration and got) else None
     same_length = off is not None and off <= max(12, 0.1 * duration)
     if artist:
-        a = mc.norm(artist)
+        a = mc.norm(mc.lead_artist(artist))      # "Flo Rida ft. T-Pain" → Flo Rida
         if a and (a in mc.norm(name) or a in mc.norm(channel)
                   or mc.name_score(artist, channel) >= 0.8):
             score += 0.4

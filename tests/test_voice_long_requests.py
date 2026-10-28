@@ -173,8 +173,14 @@ async def test_a_request_of_a_minute_and_over_500_characters_reaches_the_planner
 @smart
 async def test_two_peoples_long_requests_stay_apart(rig):
     from tests.test_voicedj_flow import OTHER
-    rig.cog.llm = FakeLLM(a_plan(("add_song", {"title": "A", "artist": "B"})),
-                          a_plan(("add_song", {"title": "C", "artist": "D"})))
+    # Answers by what was asked, not in call order: which of the two reaches
+    # the planner first is down to scheduling, and isn't what this tests.
+    class ByText(FakeLLM):
+        async def ask(self, said, *, now_playing=None):
+            self.asked.append((said, now_playing))
+            title, artist = ("A", "B") if "play A" in said else ("C", "D")
+            return a_plan(("add_song", {"title": title, "artist": artist}))
+    rig.cog.llm = ByText()
     mine = rig.say_long("Hey DJ, play A by", "by B please.", uid=UID)
     theirs = rig.say_long("Hey DJ, play C by", "by D please.", uid=OTHER)
     rig.wholes[mine] = "Hey DJ, play A by B please."

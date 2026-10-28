@@ -254,14 +254,36 @@ def title_score(heard: str, title: str) -> float:
     return best
 
 
+_FEATURING = re.compile(r"\s*[\(\[]?\s*\b(?:feat\.?|ft\.?|featuring)(?=\s|$)", re.IGNORECASE)
+
+
+def lead_artist(name: str) -> str:
+    """The credit without its featured artists: "Flo Rida ft. T-Pain" →
+    "Flo Rida". The catalogue files such a song under the lead artist and
+    puts the feature in the title ("Low (feat. T-Pain)")."""
+    return _FEATURING.split(name or "", maxsplit=1)[0].strip() or (name or "")
+
+
 def name_score(heard: str, name: str) -> float:
     """title_score for artist names, plus: a duo/feature credit that starts
-    with the asked-for name ("Yung Gravy & bbno$" for "Yung Gravy") counts
-    nearly fully, and so does the same name written without its spaces
-    ("FallOutBoy" for "Fall Out Boy")."""
+    with the asked-for name ("Yung Gravy & bbno$" or "Lil Nas X, Billy Ray
+    Cyrus" for the first named) counts nearly fully, and so does the same
+    name written without its spaces ("FallOutBoy" for "Fall Out Boy"). A
+    featured artist in the request ("Flo Rida ft. T-Pain") doesn't count
+    against the lead artist."""
+    lead = lead_artist(heard)
+    if lead != (heard or "").strip():
+        return max(_name_score(heard, name), _name_score(lead, name))
+    return _name_score(heard, name)
+
+
+def _name_score(heard: str, name: str) -> float:
     if not heard or not name:
         return 0.0
     h, n = norm(heard), norm(name)
+    first_credit = norm(name.split(",", 1)[0]) if "," in name else ""
+    if h and first_credit == h:
+        return 0.95
     if h and n and (n.startswith(h + " and ") or n.startswith(h + " feat")
                     or n.startswith(h + " x ") or n.startswith(h + " with ")):
         return 0.95
@@ -1261,11 +1283,13 @@ async def find_song(title: str, artist: str = "", *, heard: str = "", heard_arti
     CatalogError if no catalogue could be asked."""
     titles = [" ".join((t or "").split()) for t in (title, heard)]
     titles = [t for t in dict.fromkeys(titles) if t]
-    artist = " ".join((artist or "").split())
-    heard_artist = " ".join((heard_artist or "").split())
+    # The catalogue files a song under its lead artist ("Low (feat. T-Pain)" by
+    # Flo Rida): an artist search for "Flo Rida ft. T-Pain" finds nobody.
+    artist = lead_artist(" ".join((artist or "").split()))
+    heard_artist = lead_artist(" ".join((heard_artist or "").split()))
     if not titles:
         return None
-    key = ("song", tuple(norm(t) for t in titles), norm(artist), norm(heard_artist))
+    key = ("song",tuple(norm(t) for t in titles), norm(artist), norm(heard_artist))
     hit = _cached(key)
     if hit is not None:
         return hit

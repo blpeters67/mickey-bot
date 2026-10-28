@@ -178,3 +178,88 @@ def test_other_takes_lose_unless_asked_for():
     live = _up("Priest - Call My Name (Live at Sweden Rock)", "Priest", 260)
     studio = _up("Priest - Call My Name", "Priest - Topic", 240)
     assert audio.pick_upload([live, studio], "Call My Name", "Priest", 240) is studio
+
+
+# ── featured artists in the request ("Low by Flo Rida ft. T-Pain") ──────────
+#
+# The planner names a song's whole credit, featured artists included; the
+# catalogue files it under the lead artist with the feature in the title
+# ("Low (feat. T-Pain)" by Flo Rida) or lists every credit ("Lil Nas X, Billy
+# Ray Cyrus & Diplo"). Live on 2026-10-27, four of a 24-song request were
+# refused this way.
+
+@pytest.mark.parametrize("named, credited", [
+    ("Flo Rida ft. T-Pain", "Flo Rida"),
+    ("Mark Ronson ft. Bruno Mars", "Mark Ronson"),
+    ("Gotye feat. Kimbra", "Gotye"),
+    ("Gotye featuring Kimbra", "Gotye"),
+    ("Mark Ronson (feat. Bruno Mars)", "Mark Ronson"),
+    ("Lil Nas X ft. Billy Ray Cyrus", "Lil Nas X, Billy Ray Cyrus & Diplo"),
+    ("Lil Nas X", "Lil Nas X, Billy Ray Cyrus"),
+])
+def test_a_named_feature_doesnt_hide_the_lead_artist(named, credited):
+    assert mc.name_score(named, credited) >= mc.ARTIST_SURE
+
+
+@pytest.mark.parametrize("named, credited", [
+    ("Prince ft. Somebody", "Priest"),          # the lead still has to be them
+    ("Kimbra", "Gotye"),
+    ("Billy Ray Cyrus", "Lil Nas X, Billy Ray Cyrus & Diplo"),   # a feature isn't the lead
+])
+def test_featuring_doesnt_loosen_who_the_artist_is(named, credited):
+    assert mc.name_score(named, credited) < mc.ARTIST_SURE
+
+
+def test_a_song_named_with_its_feature_is_found():
+    low = mc.CatalogTrack("Low (feat. T-Pain)", "Flo Rida", 231)
+    other = mc.CatalogTrack("Low", "Ciara", 200)
+    m = mc.pick_song([other, low], ["Low"], "Flo Rida ft. T-Pain")
+    assert m.matched and m.sure and m.track is low
+
+
+def test_an_upload_counts_the_lead_artist_of_a_featured_credit():
+    up = _up("Flo Rida - Low feat. T-Pain [Official Video]", "Flo Rida", 231)
+    assert audio.upload_score(up, "Low", "Flo Rida ft. T-Pain", 231) is not None
+    assert audio.upload_score(_up("Low (Official Video)", "Ciara", 200), "Low",
+                              "Flo Rida ft. T-Pain", 231) is None
+
+
+class GotyeCatalog(FakeCatalog):
+    """Like Deezer: an artist search for "Gotye ft. Kimbra" finds nobody, and a
+    track search with the feature in it turns up a popular cover first."""
+
+    def __init__(self):
+        super().__init__()
+        self.artist_queries = []
+
+    async def handler(self, request):
+        from aiohttp import web
+        path, q = request.path, request.query
+        song = {"title": "Somebody That I Used To Know", "duration": 244,
+                "artist": {"name": "Gotye"}}
+        cover = {"title": "Somebody That I Used To Know", "duration": 250,
+                 "artist": {"name": "Kurt Hugo Schneider"}}
+        if path == "/deezer/search":
+            text = q.get("q", "").lower()
+            return web.json_response({"data": [cover] + ([song] if "kimbra" not in text else [])})
+        if path == "/deezer/search/artist":
+            self.artist_queries.append(q.get("q", ""))
+            name = q.get("q", "").lower()
+            return web.json_response({"data": [{"id": 9, "name": "Gotye", "nb_fan": 500_000}]
+                                      if name == "gotye" else []})
+        if path == "/deezer/artist/9/top":
+            return web.json_response({"data": [song]})
+        if path == "/itunes/search":
+            return web.json_response({"results": []})
+        return web.json_response({"data": []})
+
+
+def test_a_request_naming_the_feature_finds_the_lead_artists_song():
+    async def go():
+        async with GotyeCatalog() as srv:
+            m = await mc.find_song("Somebody That I Used to Know", "Gotye ft. Kimbra",
+                                   deezer=srv.deezer, itunes=srv.itunes)
+            assert m is not None and m.matched and m.sure
+            assert m.track.artist == "Gotye"
+            assert "Gotye" in srv.artist_queries
+    run(go())

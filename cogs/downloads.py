@@ -69,6 +69,8 @@ def _clean_ytdlp_err(e: Exception) -> str:
     hint = audio.auth_required_hint(e)
     if hint:
         return hint
+    if audio._is_bot_check(str(e)):
+        return audio.BOT_CHECK_MSG
     msg = _ANSI_RE.sub("", str(e)).strip()
     # yt-dlp prefixes every error with "ERROR: " — we have a ❌ already.
     if msg.startswith("ERROR:"):
