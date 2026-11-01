@@ -799,7 +799,25 @@ def _apply_stream_info(track: dict[str, Any], info: dict) -> None:
     track["_http_headers"]   = stream_headers(info)
     track["_stream_duration"] = info.get("duration") or 0
     track["_expires_at"]     = _url_expiry(info.get("url"))
+    track["_available_at"]   = info.get("available_at")
     track["_resolved_at"]    = time.time()
+
+
+#: Never hold a song back longer than this for a link's start time.
+MAX_AVAILABILITY_WAIT = 15.0
+
+
+async def _wait_until_available(track: dict[str, Any]) -> None:
+    """YouTube's links answer 403 until a moment it sets (yt-dlp reports it as
+    `available_at`, and its own downloader sleeps until then). FFmpeg is
+    handed the link directly, so wait for it here — or the song fails to
+    start, and the retry's fresh link fails the same way."""
+    at = track.get("_available_at")
+    if not isinstance(at, (int, float)):
+        return
+    wait = at - time.time()
+    if wait > 0:
+        await asyncio.sleep(min(wait, MAX_AVAILABILITY_WAIT))
 
 
 def _ytdl_info_to_track(info: dict) -> dict[str, Any]:
@@ -844,6 +862,7 @@ async def resolve_stream_url(track: dict[str, Any], *,
     if expires is not None and time.time() > expires - 120:
         fresh = False          # the URL itself says it's (nearly) dead
     if not force and not track.get("_needs_resolve") and track.get("stream_url") and fresh:
+        await _wait_until_available(track)
         return track
 
     target = track.get("_search_query") or track.get("webpage_url")
@@ -878,6 +897,7 @@ async def resolve_stream_url(track: dict[str, Any], *,
         track["thumbnail"]  = info.get("thumbnail")
     _apply_music_meta(track, info)      # artist/categories for stats + quiz
     track["_needs_resolve"] = False
+    await _wait_until_available(track)
     return track
 
 
