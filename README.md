@@ -72,6 +72,14 @@ The first run creates `bot.db` (SQLite) in the project directory and syncs
 slash commands. Slash commands can take a few minutes to appear in Discord
 the first time.
 
+To keep it running in the background, `./start.sh` starts it in a detached
+`screen` session named `swagbot` (attach with `screen -r swagbot`). To have it
+come back by itself after a reboot or a power cut, add `boot.sh` to your
+crontab; it waits for the network before starting:
+```bash
+(crontab -l 2>/dev/null; echo "@reboot $(pwd)/boot.sh") | crontab -
+```
+
 ## Inviting the bot
 
 In the Discord Developer Portal → your app → **OAuth2 → URL Generator**,
